@@ -12,7 +12,7 @@ import threading
 from time import sleep
 
 uart = serial.Serial(
-        port='COM3',
+        port='COM5',
         baudrate=4800,
         stopbits=serial.STOPBITS_ONE,
         bytesize=serial.EIGHTBITS,
@@ -123,24 +123,24 @@ def listener(lock):
             if cabecera == str.encode("GPGGA"):
                 gnss = ''
                 aux = uart.read()
-                lock.acquire()
-                while aux != str.encode("$"):
-                    gnss = gnss + bytes.decode(aux)
-                    aux = uart.read()
-                sig_trama=True
-                lock.release()
+                with lock:
+                    while aux != str.encode("$"):
+                        gnss = gnss + bytes.decode(aux)
+                        aux = uart.read()
+                    sig_trama=True
     puertoAbierto=False
     uart.reset_input_buffer()
     uart.reset_output_buffer()
                 
 def caster(gnss,lock):
-    lock.acquire()
-    latitud,ok = latitude(gnss)
-    longitud,ok = longitude(gnss)
-    lock.release()
+    printable=false;
+    with lock:
+        latitud,ok = latitude(gnss)
+        longitud,ok = longitude(gnss)
+        printable=True
     print("Longitude: ", longitud,"\n")
     print("Latitude: ", latitud, "\n")
-    if ok :
+    if ok and printable:
         y,x = calcularUTM(latitud,longitud)
         print("Coordenada X: ", x, "\n")
         print("Coordenada Y: ", y, "\n")
@@ -150,15 +150,16 @@ def caster(gnss,lock):
 ##### PROGRAMA PRINCIPAL ######
 
 
-hilo1=threading.Thread(target=(listener),args=(lock),name='Listener')
-hilo2=threading.Thread(target=(caster),args=(gnss,lock),name='Caster')
+
 
 while puertoAbierto:
-            hilo1.start()
-            hilo1.join()
-            print(gnss)
-            hilo2.start()
-            hilo2.join()    #Espera a que termine el thread hijo. No se si es necesario otro mecanismo de sincronización
+        hilo1=threading.Thread(target=(listener),args=(lock),name='Listener')
+        hilo2=threading.Thread(target=(caster),args=(gnss,lock),name='Caster')
+        hilo1.start()
+        hilo1.join()
+        print(gnss)
+        hilo2.start()
+        hilo2.join()    #Espera a que termine el thread hijo. No se si es necesario otro mecanismo de sincronización
  
         
  
