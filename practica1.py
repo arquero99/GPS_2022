@@ -9,7 +9,6 @@ Updated on Tue Mar  8 01:52:32 2022
 import serial
 import numpy as np
 import threading
-from time import sleep
 
 uart = serial.Serial(
         port='COM5',
@@ -19,23 +18,12 @@ uart = serial.Serial(
         timeout=1
         )
 
-puertoAbierto=False
+#puertoAbierto=False
 timeoutPort=5
 gnss = bytearray(200)
 cabecera = bytearray(6)
 
-lock=threading.Lock()
-
-
-while timeoutPort>0:
-    timeoutPort=timeoutPort-1
-    if uart.isOpen():
-        timeoutPort=0
-        puertoAbierto=True
-    else:
-        sleep(1)
-        
-    
+lock=threading.Lock() 
 
 # Datos para hallar coordenadas UTM con el elipsoide WGS84.
 RADIO_ECUATORIAL = 6378137.0 # Radio ecuatorial (a).
@@ -113,8 +101,8 @@ def listener(lock):
     uart.reset_input_buffer()
     uart.reset_output_buffer()    
     sig_trama = False
-    global puertoAbierto
-    while uart.isOpen():     
+    trama_completa=False
+    while uart.isOpen() and trama_completa==False:     
         global gnss
         aux = uart.read()
         if aux == str.encode("$") or sig_trama:  # lee el primer byte para ver si es $
@@ -123,24 +111,20 @@ def listener(lock):
             if cabecera == str.encode("GPGGA"):
                 gnss = ''
                 aux = uart.read()
-                with lock:
-                    while aux != str.encode("$"):
-                        gnss = gnss + bytes.decode(aux)
-                        aux = uart.read()
-                    sig_trama=True
-    puertoAbierto=False
+                while aux != str.encode("$"):
+                    gnss = gnss + bytes.decode(aux)
+                    aux = uart.read()
+                sig_trama=True
+                trama_completa=True;
     uart.reset_input_buffer()
     uart.reset_output_buffer()
                 
 def caster(gnss,lock):
-    printable=false;
-    with lock:
-        latitud,ok = latitude(gnss)
-        longitud,ok = longitude(gnss)
-        printable=True
+    latitud,ok = latitude(gnss)
+    longitud,ok = longitude(gnss)
     print("Longitude: ", longitud,"\n")
     print("Latitude: ", latitud, "\n")
-    if ok and printable:
+    if ok :
         y,x = calcularUTM(latitud,longitud)
         print("Coordenada X: ", x, "\n")
         print("Coordenada Y: ", y, "\n")
@@ -149,19 +133,14 @@ def caster(gnss,lock):
 
 ##### PROGRAMA PRINCIPAL ######
 
-
-
-
-while puertoAbierto:
-        hilo1=threading.Thread(target=(listener),args=(lock),name='Listener')
-        hilo2=threading.Thread(target=(caster),args=(gnss,lock),name='Caster')
-        hilo1.start()
-        hilo1.join()
-        print(gnss)
-        hilo2.start()
-        hilo2.join()    #Espera a que termine el thread hijo. No se si es necesario otro mecanismo de sincronización
+while uart.isOpen():
+    hilo1=threading.Thread(target=listener,args=(lock,),name='Listener')
+    hilo1.start()
+    hilo1.join()
+    print(gnss)
+    hilo2=threading.Thread(target=caster,args=(gnss,lock,),name='Caster')
+    hilo2.start()
+    hilo2.join()    #Espera a que termine el thread hijo. No se si es necesario otro mecanismo de sincronización
  
         
  
-#Mirar aquire y relase() que implementan internamente semáforos
-
