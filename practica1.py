@@ -1,24 +1,41 @@
 # -*- coding: utf-8 -*-
 """
 Created on Tue Mar  1 16:22:32 2022
+Updated on Tue Mar  8 01:52:32 2022
 
-@author: raulm
+@authors: raulm, Juan Arquero
 """
 
 import serial
 import numpy as np
+import threading
+from time import sleep
 
+uart = serial.Serial(
+        port='COM3',
+        baudrate=4800,
+        stopbits=serial.STOPBITS_ONE,
+        bytesize=serial.EIGHTBITS,
+        timeout=1
+        )
+
+puertoAbierto=False
+timeoutPort=5
 gnss = bytearray(200)
 cabecera = bytearray(6)
-aux = ''
-sig_trama = False
-uart = serial.Serial(
-    port='COM3',
-    baudrate=4800,
-    stopbits=serial.STOPBITS_ONE,
-    bytesize=serial.EIGHTBITS,
-    timeout=1
-    )
+
+lock=threading.Lock()
+
+
+while timeoutPort>0:
+    timeoutPort=timeoutPort-1
+    if uart.isOpen():
+        timeoutPort=0
+        puertoAbierto=True
+    else:
+        sleep(1)
+        
+    
 
 # Datos para hallar coordenadas UTM con el elipsoide WGS84.
 RADIO_ECUATORIAL = 6378137.0 # Radio ecuatorial (a).
@@ -91,31 +108,59 @@ def calcularUTM(latitud, longitud):
     UTM_norting = 0.9996 * (M + N * np.tan(latitud) * (((A**2)/2) + (((5-T+9*C+4*(C**2))*(A**4))/24) + (((61-58*T+(T**2)+600*C-330*EXCENTRICIDAD_2)*(A**6))/720)))
     return UTM_norting, UTM_easting
 
-
-uart.reset_input_buffer()
-uart.reset_output_buffer()
-
-while uart.isOpen():
-    aux = uart.read()
-    if aux == str.encode("$") or sig_trama:  # lee el primer byte para ver si es $
-        sig_trama = False
-        cabecera = uart.read(5)
-        if cabecera == str.encode("GPGGA"):
-            gnss = ''
-            aux = uart.read()
-            while aux != str.encode("$"):
-                gnss = gnss + bytes.decode(aux)
+def listener(lock):
+    aux = ''
+    uart.reset_input_buffer()
+    uart.reset_output_buffer()    
+    sig_trama = False
+    global puertoAbierto
+    while uart.isOpen():     
+        global gnss
+        aux = uart.read()
+        if aux == str.encode("$") or sig_trama:  # lee el primer byte para ver si es $
+            sig_trama = False
+            cabecera = uart.read(5)
+            if cabecera == str.encode("GPGGA"):
+                gnss = ''
                 aux = uart.read()
+                lock.acquire()
+                while aux != str.encode("$"):
+                    gnss = gnss + bytes.decode(aux)
+                    aux = uart.read()
+                sig_trama=True
+                lock.release()
+    puertoAbierto=False
+    uart.reset_input_buffer()
+    uart.reset_output_buffer()
+                
+def caster(gnss,lock):
+    lock.acquire()
+    latitud,ok = latitude(gnss)
+    longitud,ok = longitude(gnss)
+    lock.release()
+    print("Longitude: ", longitud,"\n")
+    print("Latitude: ", latitud, "\n")
+    if ok :
+        y,x = calcularUTM(latitud,longitud)
+        print("Coordenada X: ", x, "\n")
+        print("Coordenada Y: ", y, "\n")
             
+
+
+##### PROGRAMA PRINCIPAL ######
+
+
+hilo1=threading.Thread(target=(listener),args=(lock),name='Listener')
+hilo2=threading.Thread(target=(caster),args=(gnss,lock),name='Caster')
+
+while puertoAbierto:
+            hilo1.start()
+            hilo1.join()
             print(gnss)
-            latitud,ok = latitude(gnss)
-            longitud,ok = longitude(gnss)
-            print("Longitude: ", longitud,"\n")
-            print("Latitude: ", latitud, "\n")
-            sig_trama = True
-            if ok :
-                y,x = calcularUTM(latitud,longitud)
-                print("Coordenada X: ", x, "\n")
-                print("Coordenada Y: ", y, "\n")
+            hilo2.start()
+            hilo2.join()    #Espera a que termine el thread hijo. No se si es necesario otro mecanismo de sincronización
+ 
         
-        
+ 
+#Mirar aquire y relase() que implementan internamente semáforos
+
